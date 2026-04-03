@@ -8,19 +8,18 @@ const { MongoClient } = require('mongodb');
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
-  maxHttpBufferSize: 1e8,
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-    credentials: true
-  }
+    maxHttpBufferSize: 1e8,
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
 });
 
 app.use(express.static(path.join(__dirname, "public")));
 
 // --- MONGODB CLOUD DATABASE SETUP ---
 if (!process.env.MONGODB_URI) {
-    console.error("❌ MONGODB_URI is missing! Please set it in your Render Environment Variables.");
+    console.error("❌ MONGODB_URI is missing! Please set it in your Render/Railway Environment Variables.");
     process.exit(1);
 }
 
@@ -28,35 +27,29 @@ const mongoClient = new MongoClient(process.env.MONGODB_URI);
 let db;
 
 // Global Memory Variables
-let users = {}; let currentDocState = ""; let chatHistory = []; let canvasObjects = []; let accounts = {}; 
+let users = {}; let currentDocState = ""; let chatHistory = []; let canvasObjects = []; let accounts = {};
 
 async function initDB() {
     try {
         await mongoClient.connect();
         db = mongoClient.db('workspace');
-        
-        // 1. Load Accounts
+
         const accs = await db.collection('accounts').find({}).toArray();
         accs.forEach(a => accounts[a.username] = a.data);
 
-        // 2. Load Chat History (Limit to 500 newest)
         chatHistory = await db.collection('chat').find({}).sort({$natural: -1}).limit(500).toArray();
         chatHistory = chatHistory.reverse();
 
-        // 3. Load Canvas
         canvasObjects = await db.collection('canvas').find({}).toArray();
 
-        // 4. Load Document
         const docNode = await db.collection('doc').findOne({ id: "main" });
         if(docNode) currentDocState = docNode.text;
 
         console.log("✅ MongoDB Successfully Connected & Loaded!");
-    } catch (e) {
-        console.error("❌ MongoDB Connection Error:", e);
-    }
+    } catch (e) { console.error("❌ MongoDB Connection Error:", e); }
 }
 
-// Database Helper Functions (Replaces old fs.writeFileSync logic)
+// Database Helper Functions
 function saveAccountDB(username, data) { if(db) db.collection('accounts').updateOne({ username }, { $set: { data } }, { upsert: true }); }
 function deleteAccountDB(username) { if(db) db.collection('accounts').deleteOne({ username }); }
 function insertChatDB(msg) { if(db) db.collection('chat').insertOne(msg); }
@@ -106,7 +99,6 @@ function checkBJRoundOver() {
         bj.state = "dealerTurn";
         let dScore = calcBJScore(bj.dealerHand);
         while(dScore < 17) { bj.dealerHand.push(drawCard()); dScore = calcBJScore(bj.dealerHand); }
-
         bj.players.forEach(p => {
             if (p.status === "bust") p.result = "Lose";
             else if (dScore > 21) p.result = "Win";
@@ -143,7 +135,7 @@ function checkC4Win(b) {
 function minimax(board, depth, isMax) {
     let res = checkTTTWin(board);
     if (res === "O") return 10 - depth; if (res === "X") return depth - 10; if (res === "Draw") return 0;
-    if (isMax) { let best = -Infinity; for (let i=0; i<9; i++) { if (!board[i]) { board[i] = "O"; best = Math.max(best, minimax(board, depth+1, false)); board[i] = null; } } return best; } 
+    if (isMax) { let best = -Infinity; for (let i=0; i<9; i++) { if (!board[i]) { board[i] = "O"; best = Math.max(best, minimax(board, depth+1, false)); board[i] = null; } } return best; }
     else { let best = Infinity; for (let i=0; i<9; i++) { if (!board[i]) { board[i] = "X"; best = Math.min(best, minimax(board, depth+1, true)); board[i] = null; } } return best; }
 }
 function botTTTMove() {
@@ -161,8 +153,8 @@ function botC4Move() {
 io.on("connection", (socket) => {
     socket.on("register", (data) => {
         let u = data.username.trim(); if (accounts[u]) return socket.emit("authError", "Username already exists!");
-        accounts[u] = { password: data.password, color: data.color, status: "online", lastOnline: Date.now() }; 
-        saveAccountDB(u, accounts[u]); 
+        accounts[u] = { password: data.password, color: data.color, status: "online", lastOnline: Date.now() };
+        saveAccountDB(u, accounts[u]);
         socket.emit("authSuccess", { username: u, color: data.color });
     });
 
@@ -177,10 +169,7 @@ io.on("connection", (socket) => {
         if (newU !== oldU && accounts[newU]) return socket.emit("settingsError", "Taken!");
         
         accounts[newU] = { password: data.newPassword, color: data.newColor, status: "online", lastOnline: Date.now() };
-        if (newU !== oldU) {
-            delete accounts[oldU];
-            deleteAccountDB(oldU);
-        }
+        if (newU !== oldU) { delete accounts[oldU]; deleteAccountDB(oldU); }
         saveAccountDB(newU, accounts[newU]);
 
         socket.username = newU; socket.userColor = data.newColor; users[socket.id] = { name: newU, color: data.newColor };
@@ -189,19 +178,31 @@ io.on("connection", (socket) => {
 
     socket.on("usernameJoined", (data) => {
         socket.username = data.name.trim(); socket.userColor = data.color; users[socket.id] = { name: socket.username, color: socket.userColor }; 
-        if(accounts[socket.username]) { 
-            accounts[socket.username].status = "online"; 
-            saveAccountDB(socket.username, accounts[socket.username]);
-        }
+        if(accounts[socket.username]) { accounts[socket.username].status = "online"; saveAccountDB(socket.username, accounts[socket.username]); }
         io.emit("userListUpdate", getSafeUserList()); 
-        
-        const joinMsg = { id: Date.now().toString(), user: "System", text: `${socket.username} joined.`, isSystem: true };
-        io.emit("chatMessage", joinMsg);
+        io.emit("chatMessage", { id: Date.now().toString(), user: "System", text: `${socket.username} joined.`, isSystem: true });
 
         socket.emit("loadCanvas", canvasObjects); socket.emit("loadDoc", currentDocState); socket.emit("loadChatHistory", chatHistory);
         socket.emit("tttUpdate", { state: ttt.state, turn: ttt.turn, winner: ttt.winner, pX: ttt.pX, pO: ttt.pO }); 
         socket.emit("c4Update", { state: c4.state, turn: c4.turn, winner: c4.winner, pRed: c4.pRed, pYellow: c4.pYellow }); 
         socket.emit("bjUpdate", bj);
+    });
+
+    // ADMIN DELETE ACCOUNT FUNCTION
+    socket.on("adminDeleteAccount", (targetUser) => {
+        if (socket.username === "Ashton94949") {
+            delete accounts[targetUser];
+            deleteAccountDB(targetUser);
+            // Find and kick the user if they are currently online
+            for (let [id, u] of Object.entries(users)) {
+                if (u.name === targetUser) {
+                    io.sockets.sockets.get(id)?.emit("authError", "Your account was permanently deleted by an Admin.");
+                    io.sockets.sockets.get(id)?.disconnect();
+                }
+            }
+            io.emit("userListUpdate", getSafeUserList());
+            io.emit("chatMessage", { id: Date.now().toString(), user: "System", text: `[ADMIN] ${targetUser}'s account has been deleted.`, isSystem: true });
+        }
     });
 
     socket.on("chatMessage", (data) => {
@@ -217,15 +218,13 @@ io.on("connection", (socket) => {
             if (reply !== "") { 
                 const sm = { id: Date.now()+"sys", user: "Server Bot", color: "#5865F2", text: reply, isSystem: false, bot: true, reactions: {} }; 
                 chatHistory.push(sm); if(chatHistory.length>500) chatHistory.shift(); 
-                insertChatDB(sm);
-                io.emit("chatMessage", sm); 
+                insertChatDB(sm); io.emit("chatMessage", sm); 
                 return; 
             }
         }
         const msg = { id: Date.now()+Math.random().toString().substr(2,5), user: socket.username, color: socket.userColor, text: text, isSystem: false, replyTo: data.replyTo, reactions: {} };
         chatHistory.push(msg); if(chatHistory.length>500) chatHistory.shift(); 
-        insertChatDB(msg);
-        io.emit("chatMessage", msg);
+        insertChatDB(msg); io.emit("chatMessage", msg);
     });
 
     socket.on("addReaction", ({ msgId, emoji }) => {
@@ -240,15 +239,15 @@ io.on("connection", (socket) => {
                 if (!msg.reactions[emoji]) msg.reactions[emoji] = { count: 0, users: [] };
                 msg.reactions[emoji].count++; msg.reactions[emoji].users.push(socket.username);
             }
-            updateChatReactionsDB(msgId, msg.reactions);
-            io.emit("updateReactions", { msgId, reactions: msg.reactions });
+            updateChatReactionsDB(msgId, msg.reactions); io.emit("updateReactions", { msgId, reactions: msg.reactions });
         }
     });
 
+    // ADMIN DELETE MESSAGE
     socket.on("deleteMessage", (msgId) => { 
         if(!socket.username) return; 
         let i = chatHistory.findIndex(m => m.id === msgId); 
-        // ADMIN CHECK
+        // Allows the sender OR Ashton94949 to delete the message
         if (i !== -1 && (chatHistory[i].user === socket.username || socket.username === "Ashton94949")) { 
             chatHistory.splice(i, 1); 
             deleteChatDB(msgId);
@@ -264,9 +263,7 @@ io.on("connection", (socket) => {
         const apiKey = process.env.OPENAI_API_KEY;
         if (!apiKey) return socket.emit("aiResponse", "❌ **Server Error:** The `OPENAI_API_KEY` is missing in Render Environment Variables.");
 
-        let messages = [
-            { role: "system", content: "You are a helpful AI assistant. IMPORTANT: ALWAYS format math equations using double dollar signs `$$` for block math, and single dollar signs `$` for inline math. Do NOT use \\[ or \\] or \\( or \\). Format code blocks using standard markdown." }
-        ];
+        let messages = [{ role: "system", content: "You are a helpful AI assistant. format math using double dollar signs `$$` for block math, and single dollar signs `$` for inline math." }];
 
         if (data.image) messages.push({ role: "user", content: [ { type: "text", text: data.prompt || "Describe this image." }, { type: "image_url", image_url: { url: data.image } } ] });
         else messages.push({ role: "user", content: data.prompt });
@@ -284,7 +281,6 @@ io.on("connection", (socket) => {
                     const result = JSON.parse(body);
                     if (result.error) socket.emit("aiResponse", `❌ **OpenAI API Error:** ${result.error.message}`);
                     else if (result.choices && result.choices.length > 0) socket.emit("aiResponse", result.choices[0].message.content);
-                    else socket.emit("aiResponse", "❌ Unknown error: Received empty response from OpenAI.");
                 } catch (e) { socket.emit("aiResponse", "❌ Server Error: Failed to parse AI response."); }
             });
         });
@@ -319,7 +315,6 @@ io.on("connection", (socket) => {
     });
     socket.on("resetC4", () => { c4 = { state: Array(6).fill(null).map(()=>Array(7).fill(null)), turn: "Red", winner: null, pRed: null, pYellow: null, isBot: false }; io.emit("c4Update", c4); });
 
-    // Blackjack Multiplayer
     socket.on("bjJoin", () => {
         if (!socket.username || (bj.state !== "waiting" && bj.state !== "over")) return;
         if (!bj.players.find(p => p.name === socket.username)) {
@@ -356,47 +351,20 @@ io.on("connection", (socket) => {
     socket.on("playSound", (s) => { if(socket.username) socket.broadcast.emit("playSound", s); });
 
     // --- CANVAS & DOC ---
-    socket.on("canvasAdd", (obj) => { 
-        if(!socket.username) return; 
-        canvasObjects.push(obj); 
-        insertCanvasDB(obj); 
-        socket.broadcast.emit("canvasAdd", obj); 
-    });
-    socket.on("canvasUpdate", (obj) => { 
-        if(!socket.username) return; 
-        const i = canvasObjects.findIndex(o => o.id === obj.id); 
-        if (i !== -1) { 
-            canvasObjects[i] = obj; 
-            updateCanvasDB(obj); 
-            socket.broadcast.emit("canvasUpdate", obj); 
-        } 
-    });
-    socket.on("clearCanvas", () => { 
-        if(!socket.username) return; 
-        canvasObjects = []; 
-        clearCanvasDB(); 
-        io.emit("clearCanvas"); 
-    });
-    
+    socket.on("canvasAdd", (obj) => { if(!socket.username) return; canvasObjects.push(obj); insertCanvasDB(obj); socket.broadcast.emit("canvasAdd", obj); });
+    socket.on("canvasUpdate", (obj) => { if(!socket.username) return; const i = canvasObjects.findIndex(o => o.id === obj.id); if (i !== -1) { canvasObjects[i] = obj; updateCanvasDB(obj); socket.broadcast.emit("canvasUpdate", obj); } });
+    socket.on("clearCanvas", () => { if(!socket.username) return; canvasObjects = []; clearCanvasDB(); io.emit("clearCanvas"); });
     socket.on("undoCanvas", () => {
         if(!socket.username) return;
         for (let i = canvasObjects.length - 1; i >= 0; i--) {
             if (canvasObjects[i].user === socket.username) {
                 let removed = canvasObjects.splice(i, 1)[0];
-                removeCanvasDB(removed.id);
-                io.emit("loadCanvas", canvasObjects);
-                break;
+                removeCanvasDB(removed.id); io.emit("loadCanvas", canvasObjects); break;
             }
         }
     });
 
-    socket.on("updateDoc", (t) => { 
-        if(!socket.username) return; 
-        currentDocState = t; 
-        saveDocDB(t); 
-        socket.broadcast.emit("loadDoc", t); 
-    });
-    
+    socket.on("updateDoc", (t) => { if(!socket.username) return; currentDocState = t; saveDocDB(t); socket.broadcast.emit("loadDoc", t); });
     socket.on("searchGIFs", (q) => {
         https.get(`https://g.tenor.com/v1/search?q=${encodeURIComponent(q)}&key=LIVDSRZULELA&limit=16`, (res) => {
             let body = ""; res.on("data", chunk => body += chunk);
@@ -406,11 +374,8 @@ io.on("connection", (socket) => {
 
     socket.on("disconnect", () => {
         if (socket.username && accounts[socket.username]) {
-            accounts[socket.username].status = "offline"; 
-            accounts[socket.username].lastOnline = Date.now(); 
-            saveAccountDB(socket.username, accounts[socket.username]); 
-            delete users[socket.id];
-            
+            accounts[socket.username].status = "offline"; accounts[socket.username].lastOnline = Date.now(); 
+            saveAccountDB(socket.username, accounts[socket.username]); delete users[socket.id];
             io.emit("userListUpdate", getSafeUserList()); 
             io.emit("chatMessage", { id: Date.now().toString(), user: "System", text: `${socket.username} disconnected.`, isSystem: true });
         }
@@ -418,6 +383,4 @@ io.on("connection", (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-initDB().then(() => {
-    server.listen(PORT, () => console.log(`[SERVER] Running on Port ${PORT}`));
-});
+initDB().then(() => { server.listen(PORT, () => console.log(`[SERVER] Running on Port ${PORT}`)); });
