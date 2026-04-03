@@ -10,7 +10,8 @@ const server = http.createServer(app);
 const io = socketIO(server, {
   maxHttpBufferSize: 1e8,
   cors: {
-    origin: "*"
+    origin: "*",
+    methods: ["GET", "POST"]
   }
 });
 
