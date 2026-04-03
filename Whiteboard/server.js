@@ -7,7 +7,12 @@ const { MongoClient } = require('mongodb');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIO(server, { maxHttpBufferSize: 1e8 }); 
+const io = socketIO(server, {
+  maxHttpBufferSize: 1e8,
+  cors: {
+    origin: "*"
+  }
+});
 
 app.use(express.static(path.join(__dirname, "public")));
 
