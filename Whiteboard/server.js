@@ -11,7 +11,8 @@ const io = socketIO(server, {
   maxHttpBufferSize: 1e8,
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
