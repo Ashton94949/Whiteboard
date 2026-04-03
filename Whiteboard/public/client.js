@@ -1,5 +1,7 @@
 document.addEventListener("DOMContentLoaded", () => {
-    let socket = io();
+    let socket = io("whiteboard-production-d685.up.railway.app", {
+  transports: ["websocket", "polling"]
+});
     let myUsername = ""; let myColor = ""; let currentChannel = "chat"; let pendingPassword = "";
 
     const authGate = document.getElementById("authGate"); const appContainer = document.getElementById("appContainer");
